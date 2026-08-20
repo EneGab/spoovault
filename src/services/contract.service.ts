@@ -35,6 +35,8 @@ export interface ActivityEvent {
   actor: string;
   timestamp: number;
   status: "success" | "pending";
+  txHash?: string;
+  network?: "avalanche" | "stellar";
 }
 
 export interface AccessRequestData {
@@ -1461,6 +1463,7 @@ const getRecentActivity = async (limit = 5): Promise<ActivityEvent[]> => {
   await ensureContractDeployed();
   const contract = ensureReadContract();
   const perEventTail = Math.max(limit * 6, 40);
+  const network = getEcosystem();
   const [vaultLogs, documentLogs, requestLogs, nftLogs] = await Promise.all([
     getEventLogs("VaultCreated", { tail: perEventTail }),
     getEventLogs("DocumentAdded", { tail: perEventTail }),
@@ -1489,6 +1492,7 @@ const getRecentActivity = async (limit = 5): Promise<ActivityEvent[]> => {
     limited.map(async (entry) => {
       const timestamp = await getBlockTimestamp(entry.log.blockNumber, blockCache);
       const name = entry.parsed.name;
+      const txHash = entry.log.transactionHash;
 
       if (name === "VaultCreated") {
         return {
@@ -1496,6 +1500,8 @@ const getRecentActivity = async (limit = 5): Promise<ActivityEvent[]> => {
           actor: entry.parsed.args.creator,
           timestamp,
           status: "success" as const,
+          txHash,
+          network,
         };
       }
 
@@ -1507,6 +1513,8 @@ const getRecentActivity = async (limit = 5): Promise<ActivityEvent[]> => {
             actor: doc[4],
             timestamp,
             status: "success" as const,
+            txHash,
+            network,
           };
         } catch {
           return {
@@ -1514,6 +1522,8 @@ const getRecentActivity = async (limit = 5): Promise<ActivityEvent[]> => {
             actor: "Unknown",
             timestamp,
             status: "success" as const,
+            txHash,
+            network,
           };
         }
       }
@@ -1524,6 +1534,8 @@ const getRecentActivity = async (limit = 5): Promise<ActivityEvent[]> => {
           actor: entry.parsed.args.requester,
           timestamp,
           status: "pending" as const,
+          txHash,
+          network,
         };
       }
 
@@ -1533,6 +1545,8 @@ const getRecentActivity = async (limit = 5): Promise<ActivityEvent[]> => {
           actor: entry.parsed.args.to,
           timestamp,
           status: "success" as const,
+          txHash,
+          network,
         };
       }
 
@@ -1541,6 +1555,8 @@ const getRecentActivity = async (limit = 5): Promise<ActivityEvent[]> => {
         actor: "Unknown",
         timestamp,
         status: "success" as const,
+        txHash,
+        network,
       };
     })
   );
