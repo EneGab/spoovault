@@ -1694,3 +1694,150 @@ mod vault_access_tokens {
         client.extend_token_ttl(&999);
     }
 }
+
+mod fhe_aggregation {
+    use super::*;
+
+    fn create_mock_fhe_ciphertext(env: &Env, val: u64) -> Bytes {
+        let mut ct = Bytes::new(env);
+        // dim = 2 (32 bytes)
+        let mut dim = [0u8; 32];
+        dim[31] = 2;
+        ct.append(&Bytes::from_slice(env, &dim));
+
+        // a_0 (32 bytes)
+        let mut a0 = [0u8; 32];
+        a0[31] = 10;
+        ct.append(&Bytes::from_slice(env, &a0));
+
+        // a_1 (32 bytes)
+        let mut a1 = [0u8; 32];
+        a1[31] = 20;
+        ct.append(&Bytes::from_slice(env, &a1));
+
+        // b (32 bytes)
+        let mut b = [0u8; 32];
+        b[24..32].copy_from_slice(&val.to_be_bytes());
+        ct.append(&Bytes::from_slice(env, &b));
+
+        ct
+    }
+
+    #[test]
+    fn test_fhe_add_homomorphic_addition() {
+        let (env, _, _, _, _, _) = create_test_vault();
+        let ct1 = create_mock_fhe_ciphertext(&env, 100);
+        let ct2 = create_mock_fhe_ciphertext(&env, 250);
+
+        let sum = SpooVaultStellar::fhe_add(&env, &ct1, &ct2);
+        assert_eq!(sum.len(), 128); // 4 words * 32 bytes
+
+        // Check b component (last 32 bytes) = 100 + 250 = 350
+        let mut b_sum = [0u8; 32];
+        sum.slice(96..128).copy_into_slice(&mut b_sum);
+        let val = u64::from_be_bytes(b_sum[24..32].try_into().unwrap());
+        assert_eq!(val, 350);
+    }
+
+    #[test]
+    fn test_save_and_get_fhe_guardian_shares() {
+        let (env, client, creator, g1, g2, vault_id) = create_test_vault();
+
+        let doc_id = client.add_document(
+            &creator,
+            &vault_id,
+            &String::from_str(&env, "meta"),
+            &String::from_str(&env, "ipfs-hash"),
+            &AccessLevel::Read,
+            &ReleaseCondition::Anytime,
+            &Vec::new(&env),
+            &Vec::new(&env),
+        );
+
+        let mut guardians = Vec::new(&env);
+        guardians.push_back(g1.clone());
+        guardians.push_back(g2.clone());
+
+        let ct1 = create_mock_fhe_ciphertext(&env, 111);
+        let ct2 = create_mock_fhe_ciphertext(&env, 222);
+
+        let mut shares_fhe = Vec::new(&env);
+        shares_fhe.push_back(ct1.clone());
+        shares_fhe.push_back(ct2.clone());
+
+        client.save_guardian_shares_fhe(&creator, &doc_id, &guardians, &shares_fhe);
+
+        let stored1 = client.get_fhe_guardian_share(&doc_id, &g1);
+        assert_eq!(stored1, Some(ct1));
+
+        let stored2 = client.get_fhe_guardian_share(&doc_id, &g2);
+        assert_eq!(stored2, Some(ct2));
+    }
+
+    #[test]
+    fn test_approve_access_fhe_aggregates_shares_and_grants_access() {
+        let (env, client, creator, g1, g2, vault_id) = create_test_vault();
+        accept_guardian(&client, &env, &g1, vault_id);
+        accept_guardian(&client, &env, &g2, vault_id);
+        let beneficiary = Address::generate(&env);
+
+        let doc_id = client.add_document(
+            &creator,
+            &vault_id,
+            &String::from_str(&env, "meta"),
+            &String::from_str(&env, "ipfs-hash"),
+            &AccessLevel::Read,
+            &ReleaseCondition::Anytime,
+            &Vec::new(&env),
+            &Vec::new(&env),
+        );
+
+        let req_id = client.request_access(&beneficiary, &doc_id);
+
+        let ct1 = create_mock_fhe_ciphertext(&env, 500);
+        let ct2 = create_mock_fhe_ciphertext(&env, 700);
+
+        // Guardian 1 approves with FHE share 1
+        client.approve_access_fhe(&g1, &req_id, &ct1);
+        assert_eq!(client.get_fhe_accumulator_count(&req_id), 1);
+        let req1 = client.get_access_request(&req_id).unwrap();
+        assert_eq!(req1.status, RequestStatus::Pending);
+
+        // Guardian 2 approves with FHE share 2 (threshold = 2 reached)
+        client.approve_access_fhe(&g2, &req_id, &ct2);
+        assert_eq!(client.get_fhe_accumulator_count(&req_id), 2);
+        let req2 = client.get_access_request(&req_id).unwrap();
+        assert_eq!(req2.status, RequestStatus::Approved);
+
+        // Verify aggregate ciphertext in storage: b = 500 + 700 = 1200
+        let agg = client.get_fhe_aggregate(&req_id).unwrap();
+        assert_eq!(agg.len(), 128);
+
+        let mut b_sum = [0u8; 32];
+        agg.slice(96..128).copy_into_slice(&mut b_sum);
+        let val = u64::from_be_bytes(b_sum[24..32].try_into().unwrap());
+        assert_eq!(val, 1200);
+    }
+
+    #[test]
+    #[should_panic(expected = "Cannot self-approve access")]
+    fn test_approve_access_fhe_rejects_self_approval() {
+        let (env, client, creator, g1, _g2, vault_id) = create_test_vault();
+        accept_guardian(&client, &env, &g1, vault_id);
+
+        let doc_id = client.add_document(
+            &creator,
+            &vault_id,
+            &String::from_str(&env, "meta"),
+            &String::from_str(&env, "ipfs-hash"),
+            &AccessLevel::Read,
+            &ReleaseCondition::Anytime,
+            &Vec::new(&env),
+            &Vec::new(&env),
+        );
+
+        let req_id = client.request_access(&g1, &doc_id);
+        let ct = create_mock_fhe_ciphertext(&env, 123);
+        client.approve_access_fhe(&g1, &req_id, &ct);
+    }
+}

@@ -317,6 +317,14 @@
                       "val": {
                         "u64": 0
                       }
+                    },
+                    {
+                      "key": {
+                        "symbol": "last_proof_of_life_sequence"
+                      },
+                      "val": {
+                        "u32": 0
+                      }
                     }
                   ]
                 }
@@ -834,6 +842,14 @@
                   "val": {
                     "u64": 0
                   }
+                },
+                {
+                  "key": {
+                    "symbol": "last_proof_of_life_sequence"
+                  },
+                  "val": {
+                    "u32": 0
+                  }
                 }
               ]
             }
@@ -1018,6 +1034,14 @@
                   },
                   "val": {
                     "u64": 0
+                  }
+                },
+                {
+                  "key": {
+                    "symbol": "last_proof_of_life_sequence"
+                  },
+                  "val": {
+                    "u32": 0
                   }
                 }
               ]

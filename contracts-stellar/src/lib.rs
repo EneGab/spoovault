@@ -194,6 +194,10 @@ pub enum DataKey {
     PubKey(Address),
     GShare(u64, Address),
     BShare(u64, Address),
+    FheGShare(u64, Address),
+    FheBShare(u64, Address),
+    FheAccumulator(u64),
+    FheAccumulatorCount(u64),
     DocReleaseCond(u64),
     ReleaseState(u64),
     KeeperAuth(u64),
@@ -1040,6 +1044,228 @@ impl SpooVaultStellar {
 
         env.storage().persistent().set(&req_key, &request);
         Self::bump_persistent(&env, &req_key);
+    }
+
+    /// Save FHE-encrypted guardian shares for a document
+    pub fn save_guardian_shares_fhe(
+        env: Env,
+        uploader: Address,
+        document_id: u64,
+        guardians_list: Vec<Address>,
+        shares_fhe: Vec<Bytes>,
+    ) {
+        uploader.require_auth();
+        Self::bump_instance(&env);
+
+        let doc_key = DataKey::Doc(document_id);
+        let doc: Document = env
+            .storage()
+            .persistent()
+            .get(&doc_key)
+            .expect("Document not found");
+
+        let is_guard: bool = env
+            .storage()
+            .persistent()
+            .get(&DataKey::IsGuardian(doc.vault_id, uploader.clone()))
+            .unwrap_or(false);
+        assert!(is_guard, "Only guardians can save FHE shares");
+        assert!(
+            guardians_list.len() == shares_fhe.len(),
+            "Guardians and shares length mismatch"
+        );
+
+        for i in 0..guardians_list.len() {
+            let guardian = guardians_list.get(i).unwrap();
+            let share = shares_fhe.get(i).unwrap();
+            let key = DataKey::FheGShare(document_id, guardian);
+            env.storage().persistent().set(&key, &share);
+            Self::bump_persistent(&env, &key);
+        }
+
+        env.events().publish(
+            (Symbol::new(&env, "fhe_guardian_shares_saved"), document_id),
+            guardians_list.len(),
+        );
+    }
+
+    /// Approve document access request using FHE encrypted share payload
+    pub fn approve_access_fhe(
+        env: Env,
+        approver: Address,
+        request_id: u64,
+        fhe_share: Bytes,
+    ) {
+        approver.require_auth();
+        Self::bump_instance(&env);
+
+        let req_key = DataKey::Request(request_id);
+        let mut request: AccessRequest = env
+            .storage()
+            .persistent()
+            .get(&req_key)
+            .expect("Request not found");
+        assert!(
+            request.status == RequestStatus::Pending,
+            "Request not pending"
+        );
+        assert!(
+            env.ledger().timestamp() < request.expires_at,
+            "Request expired"
+        );
+        assert!(
+            request.requester != approver,
+            "Cannot self-approve access"
+        );
+
+        let doc_key = DataKey::Doc(request.document_id);
+        let doc: Document = env
+            .storage()
+            .persistent()
+            .get(&doc_key)
+            .expect("Document not found");
+
+        let vault_key = DataKey::Vault(doc.vault_id);
+        let vault: Vault = env
+            .storage()
+            .persistent()
+            .get(&vault_key)
+            .expect("Vault not found");
+        assert!(vault.is_active, "Vault is deactivated");
+
+        let is_guard_key = DataKey::IsGuardian(doc.vault_id, approver.clone());
+        let is_guard: bool = env
+            .storage()
+            .persistent()
+            .get(&is_guard_key)
+            .unwrap_or(false);
+        assert!(is_guard, "Only guardians can approve access");
+
+        let approved_req_key = DataKey::ApprovedReq(request_id, approver.clone());
+        let already_approved: bool = env
+            .storage()
+            .persistent()
+            .get(&approved_req_key)
+            .unwrap_or(false);
+        assert!(!already_approved, "Already approved");
+
+        env.storage().persistent().set(&approved_req_key, &true);
+        Self::bump_persistent(&env, &approved_req_key);
+
+        request.approved_by.push_back(approver.clone());
+
+        if !fhe_share.is_empty() {
+            let bshare_key = DataKey::FheBShare(request_id, approver.clone());
+            env.storage().persistent().set(&bshare_key, &fhe_share);
+            Self::bump_persistent(&env, &bshare_key);
+
+            let acc_key = DataKey::FheAccumulator(request_id);
+            let current_acc: Bytes = env
+                .storage()
+                .persistent()
+                .get(&acc_key)
+                .unwrap_or_else(|| Bytes::new(&env));
+
+            let new_acc = Self::fhe_add(&env, &current_acc, &fhe_share);
+            env.storage().persistent().set(&acc_key, &new_acc);
+            Self::bump_persistent(&env, &acc_key);
+
+            let count_key = DataKey::FheAccumulatorCount(request_id);
+            let count: u32 = env.storage().persistent().get(&count_key).unwrap_or(0);
+            env.storage().persistent().set(&count_key, &(count + 1));
+            Self::bump_persistent(&env, &count_key);
+
+            env.events().publish(
+                (Symbol::new(&env, "fhe_share_submitted"), request_id, approver),
+                (),
+            );
+        }
+
+        if request.approved_by.len() >= vault.approval_threshold {
+            request.status = RequestStatus::Approved;
+            let acc_key = DataKey::HasAccess(request.document_id, request.requester.clone());
+            let lvl_key = DataKey::AccessLvl(request.document_id, request.requester.clone());
+            env.storage().persistent().set(&acc_key, &true);
+            env.storage()
+                .persistent()
+                .set(&lvl_key, &doc.required_access);
+            Self::bump_persistent(&env, &acc_key);
+            Self::bump_persistent(&env, &lvl_key);
+
+            let agg_key = DataKey::FheAccumulator(request_id);
+            let aggregate: Bytes = env
+                .storage()
+                .persistent()
+                .get(&agg_key)
+                .unwrap_or_else(|| Bytes::new(&env));
+
+            env.events().publish(
+                (
+                    Symbol::new(&env, "fhe_aggregated"),
+                    request_id,
+                    request.document_id,
+                ),
+                (request.requester.clone(), aggregate),
+            );
+
+            let registry_key = DataKey::AccessRegistry(doc.vault_id);
+            if let Some(registry) = env.storage().persistent().get::<_, Address>(&registry_key) {
+                Self::bump_persistent(&env, &registry_key);
+                Self::notify_access_registry(
+                    &env,
+                    &registry,
+                    request.document_id,
+                    &request.requester,
+                );
+            }
+        }
+
+        env.storage().persistent().set(&req_key, &request);
+        Self::bump_persistent(&env, &req_key);
+    }
+
+    /// Retrieve on-chain aggregate FHE ciphertext for an access request
+    pub fn get_fhe_aggregate(env: Env, request_id: u64) -> Option<Bytes> {
+        Self::bump_instance(&env);
+        let key = DataKey::FheAccumulator(request_id);
+        let val: Option<Bytes> = env.storage().persistent().get(&key);
+        if val.is_some() {
+            Self::bump_persistent(&env, &key);
+        }
+        val
+    }
+
+    /// Retrieve FHE guardian share for a document
+    pub fn get_fhe_guardian_share(env: Env, document_id: u64, guardian: Address) -> Option<Bytes> {
+        Self::bump_instance(&env);
+        let key = DataKey::FheGShare(document_id, guardian);
+        let val: Option<Bytes> = env.storage().persistent().get(&key);
+        if val.is_some() {
+            Self::bump_persistent(&env, &key);
+        }
+        val
+    }
+
+    /// Retrieve FHE beneficiary share submitted for an access request
+    pub fn get_fhe_beneficiary_share(env: Env, request_id: u64, guardian: Address) -> Option<Bytes> {
+        Self::bump_instance(&env);
+        let key = DataKey::FheBShare(request_id, guardian);
+        let val: Option<Bytes> = env.storage().persistent().get(&key);
+        if val.is_some() {
+            Self::bump_persistent(&env, &key);
+        }
+        val
+    }
+
+    /// Retrieve number of FHE shares accumulated for a request
+    pub fn get_fhe_accumulator_count(env: Env, request_id: u64) -> u32 {
+        Self::bump_instance(&env);
+        let key = DataKey::FheAccumulatorCount(request_id);
+        let count: u32 = env.storage().persistent().get(&key).unwrap_or(0);
+        if count > 0 {
+            Self::bump_persistent(&env, &key);
+        }
+        count
     }
 
     /// Record proof of life for inactivity check
@@ -1949,6 +2175,111 @@ impl SpooVaultStellar {
             .persistent()
             .set(&key, &balance.saturating_sub(1));
         Self::bump_persistent(env, &key);
+    }
+
+    /// Add two 32-byte big-endian 256-bit words modulo FHE_PRIME: 2^256 - 2^32 - 977
+    pub(crate) fn add_mod_q_256(w1: &[u8; 32], w2: &[u8; 32]) -> [u8; 32] {
+        let mut a = [0u64; 4];
+        let mut b = [0u64; 4];
+        for i in 0..4 {
+            let idx = 24 - (i * 8);
+            let mut a_chunk = [0u8; 8];
+            let mut b_chunk = [0u8; 8];
+            a_chunk.copy_from_slice(&w1[idx..idx + 8]);
+            b_chunk.copy_from_slice(&w2[idx..idx + 8]);
+            a[i] = u64::from_be_bytes(a_chunk);
+            b[i] = u64::from_be_bytes(b_chunk);
+        }
+
+        // q = 2^256 - 2^32 - 977
+        let q: [u64; 4] = [
+            0xFFFF_FFFE_FFFF_FC2F,
+            0xFFFF_FFFF_FFFF_FFFF,
+            0xFFFF_FFFF_FFFF_FFFF,
+            0xFFFF_FFFF_FFFF_FFFF,
+        ];
+
+        let mut sum = [0u64; 4];
+        let mut carry: u128 = 0;
+        for i in 0..4 {
+            let val = (a[i] as u128) + (b[i] as u128) + carry;
+            sum[i] = val as u64;
+            carry = val >> 64;
+        }
+
+        let mut ge_q = carry > 0;
+        if !ge_q {
+            for i in (0..4).rev() {
+                if sum[i] > q[i] {
+                    ge_q = true;
+                    break;
+                } else if sum[i] < q[i] {
+                    ge_q = false;
+                    break;
+                }
+                if i == 0 {
+                    ge_q = true;
+                }
+            }
+        }
+
+        if ge_q {
+            let mut borrow: i128 = 0;
+            for i in 0..4 {
+                let diff = (sum[i] as i128) - (q[i] as i128) - borrow;
+                if diff < 0 {
+                    sum[i] = (diff + (1i128 << 64)) as u64;
+                    borrow = 1;
+                } else {
+                    sum[i] = diff as u64;
+                    borrow = 0;
+                }
+            }
+        }
+
+        let mut res = [0u8; 32];
+        for i in 0..4 {
+            let idx = 24 - (i * 8);
+            let chunk = sum[i].to_be_bytes();
+            res[idx..idx + 8].copy_from_slice(&chunk);
+        }
+        res
+    }
+
+    /// Homomorphic Addition over FHE ciphertext payloads: ct1 (+) ct2
+    pub(crate) fn fhe_add(env: &Env, ct1: &Bytes, ct2: &Bytes) -> Bytes {
+        if ct1.is_empty() {
+            return ct2.clone();
+        }
+        if ct2.is_empty() {
+            return ct1.clone();
+        }
+        assert!(ct1.len() >= 96 && ct2.len() >= 96, "Invalid ciphertext length");
+        assert!(ct1.len() == ct2.len(), "Ciphertext dimension mismatch");
+
+        let len = ct1.len();
+        let word_count = len / 32;
+        let mut result_bytes = Bytes::new(env);
+
+        result_bytes.append(&ct1.slice(0..32));
+
+        for i in 1..word_count {
+            let start = i * 32;
+            let end = start + 32;
+            let mut w1_bytes = [0u8; 32];
+            let mut w2_bytes = [0u8; 32];
+            ct1.slice(start..end).copy_into_slice(&mut w1_bytes);
+            ct2.slice(start..end).copy_into_slice(&mut w2_bytes);
+
+            let sum_bytes = Self::add_mod_q_256(&w1_bytes, &w2_bytes);
+            let mut sum_slice = Bytes::new(env);
+            for byte in sum_bytes.iter() {
+                sum_slice.push_back(*byte);
+            }
+            result_bytes.append(&sum_slice);
+        }
+
+        result_bytes
     }
 }
 
