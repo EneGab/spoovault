@@ -136,6 +136,7 @@ jobs:
       - name: Setup Rust nightly (cargo-fuzz)
         uses: dtolnay/rust-toolchain@nightly
         with:
+          components: rustfmt
           targets: wasm32-unknown-unknown
 
       - name: Cache cargo
@@ -154,18 +155,18 @@ jobs:
       # exist before `cargo test` on the main crate below.
       - name: Build upgrade_fixture Wasm
         working-directory: contracts-stellar/upgrade_fixture
-        run: cargo build --release --target wasm32-unknown-unknown
+        run: cargo +stable build --release --target wasm32-unknown-unknown
 
       - name: Format (Soroban crate)
         working-directory: contracts-stellar
-        run: cargo fmt
+        run: cargo +stable fmt
 
       # Runs the deterministic scenarios in src/test.rs and the
       # property-based random state-sequence fuzzing in src/fuzz_test.rs
       # (256 generated sequences per run; see docs/TESTING.md).
       - name: Run Soroban contract test suite
         working-directory: contracts-stellar
-        run: cargo test
+        run: cargo +stable test
 
       - name: Install cargo-fuzz
         run: cargo +nightly install cargo-fuzz --locked

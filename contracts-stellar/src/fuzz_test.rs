@@ -303,7 +303,7 @@ proptest! {
                     if let Some(doc) = client.get_document(&req.document_id) {
                         if let Some(vault) = client.get_vault(&doc.vault_id) {
                             prop_assert!(
-                                (req.approved_by.len() as u32) <= vault.approval_threshold,
+                                req.approved_by.len() <= vault.approval_threshold,
                                 "request {} accumulated {} approvals against a threshold of {}",
                                 req_id,
                                 req.approved_by.len(),
@@ -321,7 +321,7 @@ proptest! {
             // own requests was actually approved.
             for &doc_id in &document_ids {
                 if has_access(&env, &contract_id, doc_id, &actors.outsider) {
-                    let via_approval = approved_requesters.iter().any(|a| *a == actors.outsider);
+                    let via_approval = approved_requesters.contains(&actors.outsider);
                     let is_uploader = client
                         .get_document(&doc_id)
                         .map(|d| d.uploaded_by == actors.outsider)
