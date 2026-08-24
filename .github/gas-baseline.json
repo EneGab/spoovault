@@ -1,9 +1,9 @@
 {
   "version": 2,
   "compilerFingerprint": "bf393b2ba114",
-  "updatedAt": "2026-08-23T21:42:43.925Z",
+  "updatedAt": "2026-08-24T09:35:02.868Z",
   "gas": {
-    "CrossChainIdentityRegistry.bindIdentity(address,string,bytes32,uint256,bytes,bytes)": 1525314,
+    "CrossChainIdentityRegistry.bindIdentity(address,string,bytes32,uint256,bytes,bytes)": 1533050,
     "ERC6551Registry.createAccount(address,uint256,address,uint256,uint256,bytes)": 131636,
     "MockVRFCoordinator.fulfill(uint256,uint256)": 80941,
     "SpooAccountImplementation.executeCall(address,uint256,bytes)": 97770,
@@ -39,14 +39,12 @@
     "SpooVault.startShareRefresh(uint256,uint256)": 100887,
     "SpooVault.submitZeroShareCommitment(uint256,bytes32[])": 143449,
     "SpooVault.transferFrom(address,address,uint256)": 99513,
-    "VDFVerifier.verifyWesolowski(uint256,uint256,uint256,uint256,uint64,uint256)": 29972,
-    "VDFVerifier.CrossChainIdentityRegistry": 1904295,
-    "VDFVerifier.ERC6551Registry": 361463,
-    "VDFVerifier.MockVRFCoordinator": 260793,
-    "VDFVerifier.SpooAccountImplementation": 480646,
-    "VDFVerifier.SpooVault": 7316524,
-    "VDFVerifier.SpooVaultConsumer": 271741,
-    "VDFVerifier.TestEd25519": 1291223,
-    "VDFVerifier.constructor": 424009
+    "SpooVault.CrossChainIdentityRegistry": 1904295,
+    "SpooVault.ERC6551Registry": 361463,
+    "SpooVault.MockVRFCoordinator": 260793,
+    "SpooVault.SpooAccountImplementation": 480646,
+    "SpooVault.constructor": 7316524,
+    "SpooVault.SpooVaultConsumer": 271741,
+    "SpooVault.TestEd25519": 1291223
   }
 }
