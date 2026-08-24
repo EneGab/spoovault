@@ -64,7 +64,14 @@ fn setup<'a>() -> (Env, SpooVaultStellarClient<'a>) {
 
 /// Create a vault with the creator as guardian and two external guardians.
 /// Returns (env, client, creator, guardian1, guardian2, vault_id).
-fn create_test_vault<'a>() -> (Env, SpooVaultStellarClient<'a>, Address, Address, Address, u64) {
+fn create_test_vault<'a>() -> (
+    Env,
+    SpooVaultStellarClient<'a>,
+    Address,
+    Address,
+    Address,
+    u64,
+) {
     let (env, client) = setup();
     let creator = Address::generate(&env);
     let g1 = Address::generate(&env);
@@ -100,12 +107,7 @@ fn add_test_document(
 }
 
 /// Helper: set up g1 as an accepted guardian for the vault.
-fn accept_guardian(
-    client: &SpooVaultStellarClient<'_>,
-    _env: &Env,
-    g1: &Address,
-    vault_id: u64,
-) {
+fn accept_guardian(client: &SpooVaultStellarClient<'_>, _env: &Env, g1: &Address, vault_id: u64) {
     client.accept_guardian_invite(g1, &vault_id);
 }
 
@@ -372,7 +374,10 @@ fn test_authorize_keeper_and_relay_heartbeat() {
     assert_eq!(authorization.keeper, keeper);
     assert_eq!(authorization.expires_at, expires_at);
 
-    let before = client.get_release_state(&vault_id).unwrap().last_proof_of_life;
+    let before = client
+        .get_release_state(&vault_id)
+        .unwrap()
+        .last_proof_of_life;
     env.ledger().with_mut(|li| li.timestamp += 3600);
     client.prove_life_by_keeper(&keeper, &vault_id);
 
@@ -855,7 +860,14 @@ fn test_request_access_on_active_vault() {
         String::from_str(&env, "share2"),
         String::from_str(&env, "share3"),
     ];
-    let doc_id = add_test_document(&client, &env, creator.clone(), vault_id, guardians_list, shares);
+    let doc_id = add_test_document(
+        &client,
+        &env,
+        creator.clone(),
+        vault_id,
+        guardians_list,
+        shares,
+    );
 
     let requester = Address::generate(&env);
     let req_id = client.request_access(&requester, &doc_id);
@@ -874,7 +886,14 @@ fn test_request_access_on_deactivated_vault() {
         String::from_str(&env, "share2"),
         String::from_str(&env, "share3"),
     ];
-    let doc_id = add_test_document(&client, &env, creator.clone(), vault_id, guardians_list, shares);
+    let doc_id = add_test_document(
+        &client,
+        &env,
+        creator.clone(),
+        vault_id,
+        guardians_list,
+        shares,
+    );
 
     // Deactivate vault
     client.deactivate_vault(&creator, &vault_id);
@@ -902,7 +921,14 @@ fn test_approve_access_on_active_vault() {
         String::from_str(&env, "share2"),
         String::from_str(&env, "share3"),
     ];
-    let doc_id = add_test_document(&client, &env, creator.clone(), vault_id, guardians_list, shares);
+    let doc_id = add_test_document(
+        &client,
+        &env,
+        creator.clone(),
+        vault_id,
+        guardians_list,
+        shares,
+    );
 
     let requester = Address::generate(&env);
     let req_id = client.request_access(&requester, &doc_id);
@@ -926,7 +952,14 @@ fn test_approve_access_on_deactivated_vault() {
         String::from_str(&env, "share2"),
         String::from_str(&env, "share3"),
     ];
-    let doc_id = add_test_document(&client, &env, creator.clone(), vault_id, guardians_list, shares);
+    let doc_id = add_test_document(
+        &client,
+        &env,
+        creator.clone(),
+        vault_id,
+        guardians_list,
+        shares,
+    );
 
     let requester = Address::generate(&env);
     let req_id = client.request_access(&requester, &doc_id);
@@ -976,7 +1009,14 @@ fn test_approve_access_full_flow_grants_access() {
         String::from_str(&env, "share_g1"),
         String::from_str(&env, "share_g2"),
     ];
-    let doc_id = add_test_document(&client, &env, creator.clone(), vault_id, guardians_list, shares);
+    let doc_id = add_test_document(
+        &client,
+        &env,
+        creator.clone(),
+        vault_id,
+        guardians_list,
+        shares,
+    );
 
     let requester = Address::generate(&env);
     let req_id = client.request_access(&requester, &doc_id);
@@ -984,7 +1024,11 @@ fn test_approve_access_full_flow_grants_access() {
     // Approval threshold is 2 – first approval
     client.approve_access(&g1, &req_id, &Some(String::from_str(&env, "enc_share")));
     // Second approval meets threshold → request should be Approved
-    client.approve_access(&creator, &req_id, &Some(String::from_str(&env, "enc_share2")));
+    client.approve_access(
+        &creator,
+        &req_id,
+        &Some(String::from_str(&env, "enc_share2")),
+    );
 
     // Verify: the requester now has access (get_access doesn't exist, but we
     // can confirm the full flow completed without panicking)
@@ -1059,7 +1103,10 @@ mod cross_chain_revocation {
             .keccak256(&Bytes::from_array(env, &pk65).slice(1..65));
         let hash_bytes: Bytes = pk_hash.to_bytes().into();
         let address: BytesN<20> = hash_bytes.slice(12..32).try_into().unwrap();
-        EvmKeypair { signing_key, address }
+        EvmKeypair {
+            signing_key,
+            address,
+        }
     }
 
     /// Builds the exact digest `recover_eth_address` verifies against (using
@@ -1102,7 +1149,10 @@ mod cross_chain_revocation {
             .unwrap();
         let mut recovery_id = 0u32;
         for rid in 0..4u32 {
-            let recovered: [u8; 65] = env.crypto().secp256k1_recover(&digest, &sig_bn, rid).to_array();
+            let recovered: [u8; 65] = env
+                .crypto()
+                .secp256k1_recover(&digest, &sig_bn, rid)
+                .to_array();
             if recovered == expected_pk {
                 recovery_id = rid;
                 break;
@@ -1112,7 +1162,16 @@ mod cross_chain_revocation {
         (sig_bn, recovery_id)
     }
 
-    fn setup_linked_vault(env: &Env) -> (SpooVaultStellarClient<'static>, Address, u64, u64, EvmKeypair, BytesN<32>) {
+    fn setup_linked_vault(
+        env: &Env,
+    ) -> (
+        SpooVaultStellarClient<'static>,
+        Address,
+        u64,
+        u64,
+        EvmKeypair,
+        BytesN<32>,
+    ) {
         let contract_id = env.register_contract(None, SpooVaultStellar);
         let client = SpooVaultStellarClient::new(env, &contract_id);
 
@@ -1433,11 +1492,20 @@ mod upgrade_governance {
 
         let new_wasm_hash = install_new_wasm(&env);
         client.upgrade_contract(&admin_a, &new_wasm_hash);
-        assert_eq!(client.version(), 1, "must not swap before the threshold is met");
+        assert_eq!(
+            client.version(),
+            1,
+            "must not swap before the threshold is met"
+        );
 
         // Verify vault state before second approval
-        let preserved_vault = client.get_vault(&vault_id).expect("vault must exist before upgrade");
-        assert_eq!(preserved_vault.name, String::from_str(&env, "Pre-upgrade Vault"));
+        let preserved_vault = client
+            .get_vault(&vault_id)
+            .expect("vault must exist before upgrade");
+        assert_eq!(
+            preserved_vault.name,
+            String::from_str(&env, "Pre-upgrade Vault")
+        );
 
         client.upgrade_contract(&admin_b, &new_wasm_hash);
 
