@@ -1901,3 +1901,6 @@ impl SpooVaultStellar {
 
 #[cfg(test)]
 mod test;
+
+#[cfg(test)]
+mod fuzz_test;
